@@ -1763,11 +1763,19 @@ NOP*:1A imp,3A imp,5A imp,7A imp,DA imp,FA imp,80 imm,82 imm,89 imm,C2 imm,E2 im
       if (tilt !== 0) updateBusUI(false);
     }
   }
-  // apply one or more "addr=val" hex patches (comma-separated) directly to
-  // memory: RAM $0000-$07FF, SRAM/mapper regs $6000+ via nes_poke
+  // apply one or more hex patches (comma-separated) directly to memory:
+  // "addr=val" for a single byte, or "start-end=val" to fill a whole range
+  // (e.g. clear-flag tables). RAM $0000-$07FF, SRAM/mapper regs $6000+ via nes_poke
   function applyPatch(spec) {
-    for (const pair of spec.split(',')) {
-      const m = /^\s*([0-9a-fA-F]+)\s*=\s*([0-9a-fA-F]+)\s*$/.exec(pair);
+    for (const part of spec.split(',')) {
+      let m = /^\s*([0-9a-fA-F]+)\s*-\s*([0-9a-fA-F]+)\s*=\s*([0-9a-fA-F]+)\s*$/.exec(part);
+      if (m) {
+        const start = parseInt(m[1], 16), end = parseInt(m[2], 16), val = parseInt(m[3], 16);
+        if (isNaN(start) || isNaN(end) || isNaN(val) || start < 0 || end > 0xFFFF || start > end) continue;
+        for (let addr = start; addr <= end; addr++) api.poke(addr, val & 0xFF);
+        continue;
+      }
+      m = /^\s*([0-9a-fA-F]+)\s*=\s*([0-9a-fA-F]+)\s*$/.exec(part);
       if (!m) continue;
       const addr = parseInt(m[1], 16);
       const val = parseInt(m[2], 16);
@@ -1785,7 +1793,7 @@ NOP*:1A imp,3A imp,5A imp,7A imp,DA imp,FA imp,80 imm,82 imm,89 imm,C2 imm,E2 im
 
   // ---- URL query parameters ----
   // ?rom=<url> ?debug=1 ?pin=0 ?clock=<Hz> ?tilt=<deg> ?break=25,29 ?mute=1 ?lang=en
-  // ?patch=6000=FF,6001=A9  (one or more addr=val hex pairs, applied after ROM load)
+  // ?patch=6000=FF,6001=A9,7D00-7D3F=FF  (addr=val and/or start-end=val, applied after ROM load)
   {
     const qs = new URLSearchParams(location.search);
     const langQ = qs.get('lang');
