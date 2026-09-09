@@ -440,6 +440,7 @@
     statusEl.textContent = file.name;
     romLoaded = true;
     setPower(true);   // 電源ON(パワーオンリセット込み)
+    if (patchQ) applyPatch(patchQ);
   });
 
   // リセットはレベル信号: 押している間はリセット状態(停止)、離した瞬間に再起動
@@ -1774,6 +1775,13 @@ NOP*:1A imp,3A imp,5A imp,7A imp,DA imp,FA imp,80 imm,82 imm,89 imm,C2 imm,E2 im
       api.poke(addr, val & 0xFF);
     }
   }
+  // exposed so a patch can be (re)applied manually from the console, e.g.
+  // after picking a local ROM file, which doesn't go through the URL loader:
+  //   window.__nes.applyPatch('727=01,7D04=08,7D08=89,7D0C=20,7D10=20')
+  window.__nes.applyPatch = applyPatch;
+  // last ?patch= seen in the URL (if any) — also reapplied after a local
+  // "ROMを開く" file load, so the same URL keeps patching newly picked ROMs
+  let patchQ = null;
 
   // ---- URL query parameters ----
   // ?rom=<url> ?debug=1 ?pin=0 ?clock=<Hz> ?tilt=<deg> ?break=25,29 ?mute=1 ?lang=en
@@ -1813,7 +1821,7 @@ NOP*:1A imp,3A imp,5A imp,7A imp,DA imp,FA imp,80 imm,82 imm,89 imm,C2 imm,E2 im
     // ROM未指定時は既定のゲームを起動
     const DEFAULT_ROM_URL =
       'https://raw.githubusercontent.com/GOROman/calude-famicom-game/main/game.nes';
-    const patchQ = qs.get('patch');
+    patchQ = qs.get('patch');
     loadRomFromUrl(romQ || DEFAULT_ROM_URL).then((ok) => {
       if (ok && patchQ) applyPatch(patchQ);
     });
