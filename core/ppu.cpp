@@ -328,4 +328,44 @@ void PPU::step() {
     }
 }
 
+void PPU::saveState(std::vector<uint8_t>& b) const {
+    b.push_back(ctrl_); b.push_back(mask_); b.push_back(status_); b.push_back(oamAddr_);
+    stWr16(b, v_); stWr16(b, t_);
+    b.push_back(fineX_); b.push_back(w_); b.push_back(readBuffer_); b.push_back(openBus_);
+    b.insert(b.end(), oam_, oam_ + sizeof(oam_));
+    b.insert(b.end(), palette_, palette_ + sizeof(palette_));
+    b.insert(b.end(), vram_, vram_ + sizeof(vram_));
+    stWr32(b, (uint32_t)scanline_); stWr32(b, (uint32_t)dot_);
+    b.push_back(oddFrame_);
+    stWr16(b, bgPatLo_); stWr16(b, bgPatHi_); stWr16(b, bgAttrLo_); stWr16(b, bgAttrHi_);
+    b.push_back(ntByte_); b.push_back(atByte_); b.push_back(patLo_); b.push_back(patHi_);
+    for (int i = 0; i < 8; i++) {
+        b.push_back(sprites_[i].patLo); b.push_back(sprites_[i].patHi); b.push_back(sprites_[i].attr);
+        stWr32(b, (uint32_t)sprites_[i].x); b.push_back(sprites_[i].sprite0);
+    }
+    stWr32(b, (uint32_t)spriteCount_);
+    b.push_back(frameReady);
+    stWr32(b, frameCount);
+}
+
+void PPU::loadState(const uint8_t*& p) {
+    ctrl_ = stRd8(p); mask_ = stRd8(p); status_ = stRd8(p); oamAddr_ = stRd8(p);
+    v_ = stRd16(p); t_ = stRd16(p);
+    fineX_ = stRd8(p); w_ = stRd8(p) != 0; readBuffer_ = stRd8(p); openBus_ = stRd8(p);
+    memcpy(oam_, p, sizeof(oam_)); p += sizeof(oam_);
+    memcpy(palette_, p, sizeof(palette_)); p += sizeof(palette_);
+    memcpy(vram_, p, sizeof(vram_)); p += sizeof(vram_);
+    scanline_ = (int)stRd32(p); dot_ = (int)stRd32(p);
+    oddFrame_ = stRd8(p) != 0;
+    bgPatLo_ = stRd16(p); bgPatHi_ = stRd16(p); bgAttrLo_ = stRd16(p); bgAttrHi_ = stRd16(p);
+    ntByte_ = stRd8(p); atByte_ = stRd8(p); patLo_ = stRd8(p); patHi_ = stRd8(p);
+    for (int i = 0; i < 8; i++) {
+        sprites_[i].patLo = stRd8(p); sprites_[i].patHi = stRd8(p); sprites_[i].attr = stRd8(p);
+        sprites_[i].x = (int)stRd32(p); sprites_[i].sprite0 = stRd8(p) != 0;
+    }
+    spriteCount_ = (int)stRd32(p);
+    frameReady = stRd8(p) != 0;
+    frameCount = stRd32(p);
+}
+
 } // namespace nes

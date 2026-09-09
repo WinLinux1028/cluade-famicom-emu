@@ -399,4 +399,86 @@ void APU::writeReg(uint16_t addr, uint8_t v) {
     }
 }
 
+void APU::saveStatePulse(std::vector<uint8_t>& b, const APU::Pulse& p) {
+    b.push_back(p.enabled); b.push_back(p.duty); stWr32(b, (uint32_t)p.dutyPos);
+    stWr16(b, p.timer); stWr32(b, (uint32_t)p.timerCounter);
+    stWr32(b, (uint32_t)p.lengthCounter); b.push_back(p.lengthHalt);
+    b.push_back(p.constVolume); b.push_back(p.volume);
+    b.push_back(p.envStart); stWr32(b, (uint32_t)p.envDivider); stWr32(b, (uint32_t)p.envDecay);
+    b.push_back(p.sweepEnabled); b.push_back(p.sweepNegate); b.push_back(p.sweepReload);
+    b.push_back(p.sweepPeriod); b.push_back(p.sweepShift); stWr32(b, (uint32_t)p.sweepDivider);
+    b.push_back(p.isPulse2);
+}
+void APU::loadStatePulse(const uint8_t*& p8, APU::Pulse& p) {
+    p.enabled = stRd8(p8) != 0; p.duty = stRd8(p8); p.dutyPos = (int)stRd32(p8);
+    p.timer = stRd16(p8); p.timerCounter = (int)stRd32(p8);
+    p.lengthCounter = (int)stRd32(p8); p.lengthHalt = stRd8(p8) != 0;
+    p.constVolume = stRd8(p8) != 0; p.volume = stRd8(p8);
+    p.envStart = stRd8(p8) != 0; p.envDivider = (int)stRd32(p8); p.envDecay = (int)stRd32(p8);
+    p.sweepEnabled = stRd8(p8) != 0; p.sweepNegate = stRd8(p8) != 0; p.sweepReload = stRd8(p8) != 0;
+    p.sweepPeriod = stRd8(p8); p.sweepShift = stRd8(p8); p.sweepDivider = (int)stRd32(p8);
+    p.isPulse2 = stRd8(p8) != 0;
+}
+
+void APU::saveState(std::vector<uint8_t>& b) const {
+    saveStatePulse(b, pulse1_);
+    saveStatePulse(b, pulse2_);
+    // triangle
+    b.push_back(triangle_.enabled);
+    stWr16(b, triangle_.timer); stWr32(b, (uint32_t)triangle_.timerCounter);
+    stWr32(b, (uint32_t)triangle_.lengthCounter); b.push_back(triangle_.lengthHalt);
+    stWr32(b, (uint32_t)triangle_.linearCounter); b.push_back(triangle_.linearReload);
+    b.push_back(triangle_.linearReloadFlag); stWr32(b, (uint32_t)triangle_.seqPos);
+    // noise
+    b.push_back(noise_.enabled); b.push_back(noise_.mode); stWr16(b, noise_.shiftReg);
+    stWr32(b, (uint32_t)noise_.timerPeriod); stWr32(b, (uint32_t)noise_.timerCounter);
+    stWr32(b, (uint32_t)noise_.lengthCounter); b.push_back(noise_.lengthHalt);
+    b.push_back(noise_.constVolume); b.push_back(noise_.volume);
+    b.push_back(noise_.envStart); stWr32(b, (uint32_t)noise_.envDivider); stWr32(b, (uint32_t)noise_.envDecay);
+    // dmc
+    b.push_back(dmc_.enabled); b.push_back(dmc_.irqEnable); b.push_back(dmc_.loop);
+    stWr32(b, (uint32_t)dmc_.timerPeriod); stWr32(b, (uint32_t)dmc_.timerCounter);
+    b.push_back(dmc_.outputLevel);
+    stWr16(b, dmc_.sampleAddr); stWr16(b, dmc_.currentAddr);
+    stWr32(b, (uint32_t)dmc_.sampleLength); stWr32(b, (uint32_t)dmc_.bytesRemaining);
+    b.push_back(dmc_.shiftReg); stWr32(b, (uint32_t)dmc_.bitsRemaining);
+    b.push_back(dmc_.bufferFilled); b.push_back(dmc_.buffer); b.push_back(dmc_.silence);
+    // frame sequencer
+    stWr32(b, (uint32_t)frameStep_); stWr32(b, (uint32_t)frameCounterCycles_);
+    b.push_back(fiveStep_); b.push_back(irqInhibit_); b.push_back(frameIrq_); b.push_back(dmcIrq_);
+    b.push_back(oddCycle_);
+    // UI mixer settings
+    for (int i = 0; i < 8; i++) b.push_back(chanEnable[i]);
+    for (int i = 0; i < 8; i++) { uint32_t u; memcpy(&u, &chanVolume[i], 4); stWr32(b, u); }
+    for (int i = 0; i < 8; i++) { uint32_t u; memcpy(&u, &chanPan[i], 4); stWr32(b, u); }
+}
+
+void APU::loadState(const uint8_t*& p) {
+    loadStatePulse(p, pulse1_);
+    loadStatePulse(p, pulse2_);
+    triangle_.enabled = stRd8(p) != 0;
+    triangle_.timer = stRd16(p); triangle_.timerCounter = (int)stRd32(p);
+    triangle_.lengthCounter = (int)stRd32(p); triangle_.lengthHalt = stRd8(p) != 0;
+    triangle_.linearCounter = (int)stRd32(p); triangle_.linearReload = stRd8(p);
+    triangle_.linearReloadFlag = stRd8(p) != 0; triangle_.seqPos = (int)stRd32(p);
+    noise_.enabled = stRd8(p) != 0; noise_.mode = stRd8(p) != 0; noise_.shiftReg = stRd16(p);
+    noise_.timerPeriod = (int)stRd32(p); noise_.timerCounter = (int)stRd32(p);
+    noise_.lengthCounter = (int)stRd32(p); noise_.lengthHalt = stRd8(p) != 0;
+    noise_.constVolume = stRd8(p) != 0; noise_.volume = stRd8(p);
+    noise_.envStart = stRd8(p) != 0; noise_.envDivider = (int)stRd32(p); noise_.envDecay = (int)stRd32(p);
+    dmc_.enabled = stRd8(p) != 0; dmc_.irqEnable = stRd8(p) != 0; dmc_.loop = stRd8(p) != 0;
+    dmc_.timerPeriod = (int)stRd32(p); dmc_.timerCounter = (int)stRd32(p);
+    dmc_.outputLevel = stRd8(p);
+    dmc_.sampleAddr = stRd16(p); dmc_.currentAddr = stRd16(p);
+    dmc_.sampleLength = (int)stRd32(p); dmc_.bytesRemaining = (int)stRd32(p);
+    dmc_.shiftReg = stRd8(p); dmc_.bitsRemaining = (int)stRd32(p);
+    dmc_.bufferFilled = stRd8(p) != 0; dmc_.buffer = stRd8(p); dmc_.silence = stRd8(p) != 0;
+    frameStep_ = (int)stRd32(p); frameCounterCycles_ = (int)stRd32(p);
+    fiveStep_ = stRd8(p) != 0; irqInhibit_ = stRd8(p) != 0; frameIrq_ = stRd8(p) != 0; dmcIrq_ = stRd8(p) != 0;
+    oddCycle_ = stRd8(p) != 0;
+    for (int i = 0; i < 8; i++) chanEnable[i] = stRd8(p) != 0;
+    for (int i = 0; i < 8; i++) { uint32_t u = stRd32(p); memcpy(&chanVolume[i], &u, 4); }
+    for (int i = 0; i < 8; i++) { uint32_t u = stRd32(p); memcpy(&chanPan[i], &u, 4); }
+}
+
 } // namespace nes

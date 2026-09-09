@@ -8,6 +8,21 @@ namespace nes {
 
 class NES;
 
+// ------------------------------------------------------------- Save states
+// Tiny helpers shared by every saveState()/loadState() implementation below.
+inline void stWr8(std::vector<uint8_t>& b, uint8_t v) { b.push_back(v); }
+inline void stWr16(std::vector<uint8_t>& b, uint16_t v) { b.push_back(v & 0xFF); b.push_back(v >> 8); }
+inline void stWr32(std::vector<uint8_t>& b, uint32_t v) {
+    for (int i = 0; i < 4; i++) b.push_back((v >> (8 * i)) & 0xFF);
+}
+inline uint8_t stRd8(const uint8_t*& p) { return *p++; }
+inline uint16_t stRd16(const uint8_t*& p) { uint16_t v = p[0] | (p[1] << 8); p += 2; return v; }
+inline uint32_t stRd32(const uint8_t*& p) {
+    uint32_t v = p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24);
+    p += 4;
+    return v;
+}
+
 // ---------------------------------------------------------------- Cartridge
 enum class Mirroring { Horizontal, Vertical, SingleLow, SingleHigh, FourScreen };
 
@@ -45,6 +60,18 @@ public:
     bool hasBattery() const { return battery_; }
     std::vector<uint8_t>& prgRam() { return prgRam_; }
 
+    // subclasses override to add their own bank/IRQ registers; always call
+    // the base first/last to keep prgRam_ and mirroring_ in sync
+    virtual void saveState(std::vector<uint8_t>& b) const {
+        b.insert(b.end(), prgRam_.begin(), prgRam_.end());
+        b.push_back((uint8_t)mirroring_);
+    }
+    virtual void loadState(const uint8_t*& p) {
+        memcpy(prgRam_.data(), p, prgRam_.size());
+        p += prgRam_.size();
+        mirroring_ = (Mirroring)stRd8(p);
+    }
+
 protected:
     std::vector<uint8_t> prg_, chr_, prgRam_;
     Mirroring mirroring_;
@@ -64,6 +91,8 @@ public:
     void nmi() { nmiPending_ = true; }
     void irq(bool level) { irqLine_ = level; }
     void addStall(int c) { stall_ += c; }
+    void saveState(std::vector<uint8_t>& b) const;
+    void loadState(const uint8_t*& p);
 
     uint16_t pc = 0;
     uint8_t a = 0, x = 0, y = 0, sp = 0xFD;
@@ -97,6 +126,8 @@ public:
     uint8_t readReg(uint16_t addr);       // $2000-$2007
     void writeReg(uint16_t addr, uint8_t v);
     void writeOamDma(uint8_t v, const uint8_t* page);
+    void saveState(std::vector<uint8_t>& b) const;
+    void loadState(const uint8_t*& p);
 
     bool frameReady = false;    // set at end of each frame; consumer clears
     uint32_t frameCount = 0;    // frames since reset/power-on
@@ -152,6 +183,8 @@ public:
     uint8_t readStatus();
     void writeReg(uint16_t addr, uint8_t v);
     bool irqPending() const { return frameIrq_ || dmcIrq_; }
+    void saveState(std::vector<uint8_t>& b) const;
+    void loadState(const uint8_t*& p);
 
     // audio output: float samples accumulated per frame (stereo)
     float sampleBuf[2048] = {};      // left
@@ -190,6 +223,8 @@ private:
         void stepSweep();
         bool sweepMuted() const;
     } pulse1_, pulse2_;
+    static void saveStatePulse(std::vector<uint8_t>& b, const Pulse& p);
+    static void loadStatePulse(const uint8_t*& p8, Pulse& p);
 
     struct Triangle {
         bool enabled = false;
@@ -256,6 +291,12 @@ public:
         shift_ = (shift_ >> 1) | 0x80;
         return r;
     }
+    void saveState(std::vector<uint8_t>& b) const {
+        b.push_back(buttons_); b.push_back(shift_); b.push_back(strobe_ ? 1 : 0);
+    }
+    void loadState(const uint8_t*& p) {
+        buttons_ = stRd8(p); shift_ = stRd8(p); strobe_ = stRd8(p) != 0;
+    }
 private:
     uint8_t buttons_ = 0, shift_ = 0;
     bool strobe_ = false;
@@ -276,6 +317,11 @@ public:
 
     uint8_t cpuRead(uint16_t addr);
     void cpuWrite(uint16_t addr, uint8_t v);
+
+    // full snapshot: CPU/PPU/APU/mapper/RAM/pad state (not connector-fault
+    // wiring or audio scope history — those aren't "game state")
+    std::vector<uint8_t> saveState() const;
+    bool loadState(const uint8_t* data, size_t size);
 
     CPU cpu;
     PPU ppu;

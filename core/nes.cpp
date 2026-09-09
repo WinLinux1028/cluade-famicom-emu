@@ -121,6 +121,35 @@ void NES::cpuWrite(uint16_t addr, uint8_t v) {
     mapper->cpuWrite(maskedAddr, (v & prgDataAnd) | (cartOpenBus(addr) & ~prgDataAnd));
 }
 
+std::vector<uint8_t> NES::saveState() const {
+    std::vector<uint8_t> b;
+    b.insert(b.end(), ram, ram + sizeof(ram));
+    b.insert(b.end(), apuRegShadow, apuRegShadow + sizeof(apuRegShadow));
+    cpu.saveState(b);
+    ppu.saveState(b);
+    apu.saveState(b);
+    pad[0].saveState(b);
+    pad[1].saveState(b);
+    if (mapper) mapper->saveState(b);
+    return b;
+}
+
+bool NES::loadState(const uint8_t* data, size_t size) {
+    if (!mapper) return false;
+    const uint8_t* p = data;
+    const uint8_t* end = data + size;
+    if (size < sizeof(ram) + sizeof(apuRegShadow)) return false;
+    memcpy(ram, p, sizeof(ram)); p += sizeof(ram);
+    memcpy(apuRegShadow, p, sizeof(apuRegShadow)); p += sizeof(apuRegShadow);
+    cpu.loadState(p);
+    ppu.loadState(p);
+    apu.loadState(p);
+    pad[0].loadState(p);
+    pad[1].loadState(p);
+    mapper->loadState(p);
+    return p <= end;
+}
+
 void NES::runFrame() {
     ppu.frameReady = false;
     while (!ppu.frameReady) {
@@ -375,6 +404,35 @@ API uint8_t* nes_chan_buffer(int ch) {
 
 API int nes_has_battery() {
     return (g_nes && g_nes->mapper && g_nes->mapper->hasBattery()) ? 1 : 0;
+}
+
+// direct memory write for the debugger / URL patch feature. Bypasses the
+// simulated cartridge-connector faults (unlike a real CPU write) so a patch
+// always lands, the same way the WRAM/SRAM hex editors poke memory directly.
+API void nes_poke(int addr, int value) {
+    if (!g_nes) return;
+    uint16_t a = (uint16_t)addr;
+    uint8_t v = (uint8_t)value;
+    if (a < 0x2000) { g_nes->ram[a & 0x7FF] = v; return; }
+    if (a < 0x4020) { g_nes->cpuWrite(a, v); return; }
+    if (g_nes->mapper) g_nes->mapper->cpuWrite(a, v);
+}
+
+// ---- save states ----
+static std::vector<uint8_t> g_stateBuf;
+static uint8_t g_stateLoadBuf[65536];
+
+API uint8_t* nes_save_state() {
+    if (!g_nes || !g_nes->mapper) { g_stateBuf.clear(); return nullptr; }
+    g_stateBuf = g_nes->saveState();
+    return g_stateBuf.data();
+}
+API int nes_save_state_size() { return (int)g_stateBuf.size(); }
+
+API uint8_t* nes_state_load_buffer() { return g_stateLoadBuf; }
+API int nes_load_state(int size) {
+    if (!g_nes || !g_nes->mapper || size <= 0 || (size_t)size > sizeof(g_stateLoadBuf)) return 0;
+    return g_nes->loadState(g_stateLoadBuf, (size_t)size) ? 1 : 0;
 }
 
 } // extern "C"

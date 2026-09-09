@@ -68,6 +68,16 @@ public:
     }
     uint8_t ppuRead(uint16_t addr) override { return chr_[chrAddr(addr)]; }
     void ppuWrite(uint16_t addr, uint8_t v) override { if (chrRam_) chr_[chrAddr(addr)] = v; }
+    void saveState(std::vector<uint8_t>& b) const override {
+        Mapper::saveState(b);
+        b.push_back(shift_); b.push_back(control_); b.push_back(chrBank0_);
+        b.push_back(chrBank1_); b.push_back(prgBank_);
+    }
+    void loadState(const uint8_t*& p) override {
+        Mapper::loadState(p);
+        shift_ = stRd8(p); control_ = stRd8(p); chrBank0_ = stRd8(p);
+        chrBank1_ = stRd8(p); prgBank_ = stRd8(p);
+    }
 private:
     size_t chrAddr(uint16_t addr) {
         size_t banks4k = chr_.size() / 0x1000;
@@ -106,6 +116,14 @@ public:
         else if (addr >= 0x6000) prgRam_[addr - 0x6000] = v;
     }
     uint8_t ppuRead(uint16_t addr) override { return chr_[addr & 0x1FFF]; }
+    void saveState(std::vector<uint8_t>& b) const override {
+        Mapper::saveState(b);
+        b.push_back((uint8_t)bank_);
+    }
+    void loadState(const uint8_t*& p) override {
+        Mapper::loadState(p);
+        bank_ = stRd8(p);
+    }
 private:
     int bank_ = 0, prgBanks_;
 };
@@ -124,6 +142,14 @@ public:
     }
     uint8_t ppuRead(uint16_t addr) override {
         return chr_[(size_t)bank_ * 0x2000 + (addr & 0x1FFF)];
+    }
+    void saveState(std::vector<uint8_t>& b) const override {
+        Mapper::saveState(b);
+        stWr32(b, (uint32_t)bank_);
+    }
+    void loadState(const uint8_t*& p) override {
+        Mapper::loadState(p);
+        bank_ = (int)stRd32(p);
     }
 private:
     int bank_ = 0;
@@ -180,6 +206,20 @@ public:
     }
     bool irqPending() const override { return irqPending_; }
     void irqClear() override { irqPending_ = false; }
+    void saveState(std::vector<uint8_t>& b) const override {
+        Mapper::saveState(b);
+        b.push_back(bankSelect_);
+        b.insert(b.end(), regs_, regs_ + 8);
+        b.push_back(irqLatch_); b.push_back(irqCounter_);
+        b.push_back(irqEnabled_); b.push_back(irqPending_);
+    }
+    void loadState(const uint8_t*& p) override {
+        Mapper::loadState(p);
+        bankSelect_ = stRd8(p);
+        memcpy(regs_, p, 8); p += 8;
+        irqLatch_ = stRd8(p); irqCounter_ = stRd8(p);
+        irqEnabled_ = stRd8(p) != 0; irqPending_ = stRd8(p) != 0;
+    }
 private:
     size_t chrAddr(uint16_t addr) {
         bool invert = bankSelect_ & 0x80;
@@ -303,6 +343,41 @@ public:
     }
     // 6-bit linear DAC, leveled against the 2A03 mix
     float expansionGain() const override { return 0.0065f; }
+
+    void saveState(std::vector<uint8_t>& b) const override {
+        Mapper::saveState(b);
+        b.push_back(prg16_); b.push_back(prg8_);
+        b.insert(b.end(), chrReg_, chrReg_ + 8);
+        stWr32(b, (uint32_t)chrMode_); b.push_back(prgRamEnable_);
+        b.push_back(irqLatch_); b.push_back(irqCounter_);
+        stWr32(b, (uint32_t)irqPrescaler_);
+        b.push_back(irqMode_); b.push_back(irqEnable_); b.push_back(irqEnableAfterAck_); b.push_back(irqPending_);
+        b.push_back(halt_); stWr32(b, (uint32_t)freqShift_);
+        // pulses
+        b.push_back(p1_.volume); b.push_back(p1_.duty); b.push_back(p1_.ignoreDuty); b.push_back(p1_.enabled);
+        stWr16(b, p1_.freq); stWr32(b, (uint32_t)p1_.timer); stWr32(b, (uint32_t)p1_.step);
+        b.push_back(p2_.volume); b.push_back(p2_.duty); b.push_back(p2_.ignoreDuty); b.push_back(p2_.enabled);
+        stWr16(b, p2_.freq); stWr32(b, (uint32_t)p2_.timer); stWr32(b, (uint32_t)p2_.step);
+        // sawtooth
+        b.push_back(saw_.rate); b.push_back(saw_.accumulator); b.push_back(saw_.enabled);
+        stWr16(b, saw_.freq); stWr32(b, (uint32_t)saw_.timer); stWr32(b, (uint32_t)saw_.step);
+    }
+    void loadState(const uint8_t*& p) override {
+        Mapper::loadState(p);
+        prg16_ = stRd8(p); prg8_ = stRd8(p);
+        memcpy(chrReg_, p, 8); p += 8;
+        chrMode_ = (int)stRd32(p); prgRamEnable_ = stRd8(p) != 0;
+        irqLatch_ = stRd8(p); irqCounter_ = stRd8(p);
+        irqPrescaler_ = (int)stRd32(p);
+        irqMode_ = stRd8(p) != 0; irqEnable_ = stRd8(p) != 0; irqEnableAfterAck_ = stRd8(p) != 0; irqPending_ = stRd8(p) != 0;
+        halt_ = stRd8(p) != 0; freqShift_ = (int)stRd32(p);
+        p1_.volume = stRd8(p); p1_.duty = stRd8(p); p1_.ignoreDuty = stRd8(p) != 0; p1_.enabled = stRd8(p) != 0;
+        p1_.freq = stRd16(p); p1_.timer = (int)stRd32(p); p1_.step = (int)stRd32(p);
+        p2_.volume = stRd8(p); p2_.duty = stRd8(p); p2_.ignoreDuty = stRd8(p) != 0; p2_.enabled = stRd8(p) != 0;
+        p2_.freq = stRd16(p); p2_.timer = (int)stRd32(p); p2_.step = (int)stRd32(p);
+        saw_.rate = stRd8(p); saw_.accumulator = stRd8(p); saw_.enabled = stRd8(p) != 0;
+        saw_.freq = stRd16(p); saw_.timer = (int)stRd32(p); saw_.step = (int)stRd32(p);
+    }
 
 private:
     struct Pulse {

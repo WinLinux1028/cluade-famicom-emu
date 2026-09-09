@@ -404,4 +404,20 @@ int CPU::step() {
     return cycles;
 }
 
+void CPU::saveState(std::vector<uint8_t>& b) const {
+    stWr16(b, pc);
+    b.push_back(a); b.push_back(x); b.push_back(y); b.push_back(sp);
+    b.push_back(fC); b.push_back(fZ); b.push_back(fI); b.push_back(fD); b.push_back(fV); b.push_back(fN);
+    b.push_back(nmiPending_); b.push_back(irqLine_);
+    stWr32(b, (uint32_t)stall_);
+}
+
+void CPU::loadState(const uint8_t*& p) {
+    pc = stRd16(p);
+    a = stRd8(p); x = stRd8(p); y = stRd8(p); sp = stRd8(p);
+    fC = stRd8(p); fZ = stRd8(p); fI = stRd8(p); fD = stRd8(p); fV = stRd8(p); fN = stRd8(p);
+    nmiPending_ = stRd8(p); irqLine_ = stRd8(p);
+    stall_ = (int)stRd32(p);
+}
+
 } // namespace nes
