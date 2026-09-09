@@ -45,6 +45,11 @@
     sram: Module._nes_sram,
     sramSize: Module._nes_sram_size,
     hasBattery: Module._nes_has_battery,
+    poke: Module._nes_poke,
+    saveState: Module._nes_save_state,
+    saveStateSize: Module._nes_save_state_size,
+    stateLoadBuffer: Module._nes_state_load_buffer,
+    loadState: Module._nes_load_state,
   };
   window.__nes = { api, Module, frames: 0, getButtons: () => buttons };
 
@@ -277,6 +282,33 @@
     for (let i = 0; i < size; i++) Module.HEAPU8[ptr + i] = bin.charCodeAt(i);
   }
   window.addEventListener('pagehide', saveSram);
+
+  // ------------------------------------------------------------------ save states
+  function saveState() {
+    if (!romKey) return;
+    const ptr = api.saveState();
+    if (!ptr) { statusEl.textContent = t('stateFail'); return; }
+    const size = api.saveStateSize();
+    const data = Module.HEAPU8.subarray(ptr, ptr + size);
+    let bin = '';
+    for (let i = 0; i < size; i++) bin += String.fromCharCode(data[i]);
+    try {
+      localStorage.setItem('state:' + romKey, btoa(bin));
+      statusEl.textContent = t('stateSaved');
+    } catch (_) {}
+  }
+  function loadState() {
+    if (!romKey) return;
+    const b64 = localStorage.getItem('state:' + romKey);
+    if (!b64) { statusEl.textContent = t('stateNone'); return; }
+    const bin = atob(b64);
+    const bufPtr = api.stateLoadBuffer();
+    for (let i = 0; i < bin.length; i++) Module.HEAPU8[bufPtr + i] = bin.charCodeAt(i);
+    const ok = api.loadState(bin.length);
+    statusEl.textContent = ok ? t('stateLoaded') : t('stateFail');
+  }
+  document.getElementById('btn-state-save').addEventListener('click', saveState);
+  document.getElementById('btn-state-load').addEventListener('click', loadState);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') saveSram();
   });
@@ -541,10 +573,10 @@
       buf = new Uint8Array(await res.arrayBuffer());
     } catch (_) {
       statusEl.textContent = t('urlFail');
-      return;
+      return false;
     }
     const p = parseNes(buf);
-    if (!p) { statusEl.textContent = t('unsupportedFmt'); return; }
+    if (!p) { statusEl.textContent = t('unsupportedFmt'); return false; }
     const name = decodeURIComponent((url.split('/').pop() || 'rom.nes').split('?')[0]) || 'rom.nes';
     saveSram();
     cartPrg = { name, header: p.header, data: p.prg };
@@ -557,7 +589,9 @@
       resumeAudio();
       statusEl.textContent = name;
       swapPanel.classList.remove('show');
+      return true;
     }
+    return false;
   }
   const swapUrlInput = document.getElementById('swap-url');
   document.getElementById('swap-url-btn').addEventListener('click', () => {
@@ -1277,6 +1311,60 @@
     inp.addEventListener('keyup', (ev) => ev.stopPropagation());
     inp.addEventListener('blur', () => finish(true));
   });
+
+  // SRAM ($6000-$7FFF) dump: same pattern as the WRAM editor above
+  const dbgSram = document.getElementById('dbg-sram');
+  const sramSpans = [];
+  const sramHotAt = new Float64Array(0x2000);
+  const sramStreak = new Uint8Array(0x2000);
+  let sramPrimed = false;
+  let editingSramSpan = null;
+  for (let row = 0; row < 0x2000; row += 16) {
+    const line = document.createElement('div');
+    const lab = document.createElement('span');
+    lab.textContent = '$' + (0x6000 + row).toString(16).toUpperCase().padStart(4, '0') + '  ';
+    line.appendChild(lab);
+    for (let i = 0; i < 16; i++) {
+      const s = document.createElement('span');
+      s.className = 'ram-b';
+      s.dataset.addr = row + i;
+      s.textContent = '00';
+      line.appendChild(s);
+      sramSpans.push(s);
+    }
+    dbgSram.appendChild(line);
+  }
+  dbgSram.addEventListener('dblclick', (e) => {
+    const span = e.target.closest('.ram-b');
+    if (!span || editingSramSpan || !api.sramSize()) return;
+    e.preventDefault();
+    editingSramSpan = span;
+    const addr = +span.dataset.addr;
+    const inp = document.createElement('input');
+    inp.className = 'ram-edit';
+    inp.maxLength = 2;
+    inp.value = span.textContent;
+    span.textContent = '';
+    span.appendChild(inp);
+    inp.focus();
+    inp.select();
+    const finish = (commit) => {
+      if (editingSramSpan !== span) return;
+      editingSramSpan = null;
+      const v = parseInt(inp.value, 16);
+      inp.remove();
+      if (commit && !isNaN(v)) Module.HEAPU8[api.sram() + addr] = v & 0xFF;
+      span.textContent = hex2(Module.HEAPU8[api.sram() + addr]);
+    };
+    inp.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') finish(true);
+      else if (ev.key === 'Escape') finish(false);
+    });
+    inp.addEventListener('keyup', (ev) => ev.stopPropagation());
+    inp.addEventListener('blur', () => finish(true));
+  });
+
   const chrCanvas = document.getElementById('chr-canvas');
   const chrCtx = chrCanvas.getContext('2d');
   const chrImage = chrCtx.createImageData(128, 256);
@@ -1544,6 +1632,37 @@ NOP*:1A imp,3A imp,5A imp,7A imp,DA imp,FA imp,80 imm,82 imm,89 imm,C2 imm,E2 im
     }
     wramPrimed = true;
 
+    const sramSize = api.sramSize();
+    if (sramSize > 0) {
+      const sram = Module.HEAPU8.subarray(api.sram(), api.sram() + sramSize);
+      for (let a = 0; a < sramSize; a++) {
+        const s = sramSpans[a];
+        if (s === editingSramSpan) continue;
+        const h = hex2(sram[a]);
+        const changed = s.textContent !== h;
+        if (changed) s.textContent = h;
+        if (!sramPrimed) continue;
+        let st = sramStreak[a];
+        st = changed ? Math.min(st + 1, 20) : (st > 0 ? st - 1 : 0);
+        sramStreak[a] = st;
+        if (st >= 8) {
+          s.classList.add('busy');
+          s.classList.remove('hot');
+          sramHotAt[a] = 0;
+        } else {
+          s.classList.remove('busy');
+          if (changed) {
+            s.classList.add('hot');
+            sramHotAt[a] = now;
+          } else if (sramHotAt[a] && now - sramHotAt[a] > 700) {
+            s.classList.remove('hot');
+            sramHotAt[a] = 0;
+          }
+        }
+      }
+      sramPrimed = true;
+    }
+
     const chrPtr = api.renderChr(chrPal);
     if (chrPtr) {
       chrImage.data.set(Module.HEAPU8.subarray(chrPtr, chrPtr + 128 * 256 * 4));
@@ -1643,8 +1762,22 @@ NOP*:1A imp,3A imp,5A imp,7A imp,DA imp,FA imp,80 imm,82 imm,89 imm,C2 imm,E2 im
       if (tilt !== 0) updateBusUI(false);
     }
   }
+  // apply one or more "addr=val" hex patches (comma-separated) directly to
+  // memory: RAM $0000-$07FF, SRAM/mapper regs $6000+ via nes_poke
+  function applyPatch(spec) {
+    for (const pair of spec.split(',')) {
+      const m = /^\s*([0-9a-fA-F]+)\s*=\s*([0-9a-fA-F]+)\s*$/.exec(pair);
+      if (!m) continue;
+      const addr = parseInt(m[1], 16);
+      const val = parseInt(m[2], 16);
+      if (isNaN(addr) || isNaN(val) || addr < 0 || addr > 0xFFFF) continue;
+      api.poke(addr, val & 0xFF);
+    }
+  }
+
   // ---- URL query parameters ----
   // ?rom=<url> ?debug=1 ?pin=0 ?clock=<Hz> ?tilt=<deg> ?break=25,29 ?mute=1 ?lang=en
+  // ?patch=6000=FF,6001=A9  (one or more addr=val hex pairs, applied after ROM load)
   {
     const qs = new URLSearchParams(location.search);
     const langQ = qs.get('lang');
@@ -1680,7 +1813,10 @@ NOP*:1A imp,3A imp,5A imp,7A imp,DA imp,FA imp,80 imm,82 imm,89 imm,C2 imm,E2 im
     // ROM未指定時は既定のゲームを起動
     const DEFAULT_ROM_URL =
       'https://raw.githubusercontent.com/GOROman/calude-famicom-game/main/game.nes';
-    loadRomFromUrl(romQ || DEFAULT_ROM_URL);
+    const patchQ = qs.get('patch');
+    loadRomFromUrl(romQ || DEFAULT_ROM_URL).then((ok) => {
+      if (ok && patchQ) applyPatch(patchQ);
+    });
   }
   applyLanguage();
   requestAnimationFrame((now) => { lastTime = now; tick(now); });
